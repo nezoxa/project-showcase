@@ -1,41 +1,31 @@
-"""Compare a synthetic detection result with the expected order count."""
+"""Run the counting geometry on synthetic tile-local detections."""
 
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True)
-class Box:
-    left: int
-    top: int
-    right: int
-    bottom: int
-    confidence: float
-
-    @property
-    def area(self) -> int:
-        return (self.right - self.left) * (self.bottom - self.top)
-
-    def overlap(self, other: "Box") -> float:
-        width = max(0, min(self.right, other.right) - max(self.left, other.left))
-        height = max(0, min(self.bottom, other.bottom) - max(self.top, other.top))
-        intersection = width * height
-        return intersection / (self.area + other.area - intersection)
+from detections import DetectedInstance, dedupe_boxes
+from tiling import iter_tiles, project_box
 
 
-def count_objects(boxes: list[Box], threshold: float = 0.5) -> int:
-    kept = []
-    for box in sorted(boxes, key=lambda item: item.confidence, reverse=True):
-        if all(box.overlap(other) < threshold for other in kept):
-            kept.append(box)
-    return len(kept)
+def main() -> None:
+    width, height = 560, 320
+    tiles = list(iter_tiles(width, height, tile_size=320, overlap=0.25))
+    sample_detections = [
+        (tiles[0], (271, 84, 297, 113), 0.88),  # Clipped copy from an adjacent tile.
+        (tiles[1], (22, 74, 79, 125), 0.95),
+        (tiles[1], (24, 75, 80, 126), 0.79),  # Lower-confidence copy in the same tile.
+        (tiles[2], (35, 70, 68, 130), 0.91),
+    ]
+
+    instances: list[DetectedInstance] = []
+    for tile, local_box, confidence in sample_detections:
+        box = project_box(tile, local_box, width=width, height=height)
+        if box is not None:
+            instances.append(DetectedInstance(confidence=confidence, bbox=box))
+
+    kept = dedupe_boxes(instances, merge_iou=0.5)
+    expected = 3
+    print(f"Raw detections: {len(sample_detections)}")
+    print(f"After checking tile ownership: {len(instances)}")
+    print(f"Expected: {expected}, detected: {len(kept)}, difference: {len(kept) - expected:+d}")
 
 
 if __name__ == "__main__":
-    detections = [
-        Box(10, 10, 40, 40, 0.95),
-        Box(12, 12, 41, 41, 0.82),
-        Box(60, 10, 90, 40, 0.93),
-    ]
-    expected = 3
-    detected = count_objects(detections)
-    print(f"Expected: {expected}, detected: {detected}, difference: {detected - expected:+d}")
+    main()
